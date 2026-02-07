@@ -153,7 +153,7 @@ Remove `dtoverlay=dwc2` from `/boot/firmware/config.txt` and `dwc2`/`libcomposit
 
 ## Credits
 
-Built by **Cedrik** ([@c4g7-dev](https://github.com/c4g7-dev)).
+Built by **c4g7** ([@c4g7-dev](https://github.com/c4g7-dev)) and **Cedrik**.
 
 ## License
 
