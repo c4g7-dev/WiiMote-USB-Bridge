@@ -53,6 +53,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 NUM_PLAYERS = 2
+
+# Module-level lock: only one thread may perform a Bluetooth scan at a time.
+# The Pi Zero W's single HCI adapter cannot handle concurrent inquiry scans;
+# without this, cwiid.Wiimote() calls from two threads collide and produce
+# "Bluetooth name read error" failures.
+_bt_scan_lock = threading.Lock()
 POLL_RATE_HZ = 100
 POLL_INTERVAL = 1.0 / POLL_RATE_HZ
 SCAN_RETRY_DELAY = 2.0  # seconds between scan attempts
@@ -312,6 +318,10 @@ class PlayerSlot:
     def _scan_for_wiimote(self):
         """Block until a Wiimote is found or the slot is stopped.
 
+        Uses a module-level lock so that only one player slot performs a
+        Bluetooth inquiry scan at a time (the Pi Zero W's single HCI
+        adapter cannot handle concurrent scans).
+
         Returns:
             A cwiid.Wiimote instance, or None if stopped / error.
         """
@@ -320,6 +330,10 @@ class PlayerSlot:
                 "[%s] Waiting for Wiimote (press 1+2 on controller)...",
                 self.player_label,
             )
+            acquired = _bt_scan_lock.acquire(timeout=SCAN_RETRY_DELAY)
+            if not acquired:
+                # Other slot is scanning — wait and retry
+                continue
             try:
                 wiimote = cwiid.Wiimote()
                 logger.info("[%s] Wiimote connected!", self.player_label)
@@ -327,7 +341,9 @@ class PlayerSlot:
             except RuntimeError:
                 # No Wiimote responded within cwiid's internal timeout (~2s)
                 logger.debug("[%s] No Wiimote found, retrying...", self.player_label)
-                time.sleep(SCAN_RETRY_DELAY)
+            finally:
+                _bt_scan_lock.release()
+            time.sleep(SCAN_RETRY_DELAY)
         return None
 
     def _configure_wiimote(self, wiimote):
@@ -492,6 +508,13 @@ class WiimoteBridge:
                     "anyway; USB forwarding begins when cable is connected",
                     hidg,
                 )
+
+        # Ensure adapter is pairable for classic Bluetooth (Wiimotes)
+        try:
+            os.system("bluetoothctl pairable on 2>/dev/null")
+            logger.info("Bluetooth adapter set to pairable")
+        except Exception:
+            pass
 
         # Create and start player slots
         for i in range(self.num_players):
