@@ -1,7 +1,7 @@
 #!/bin/bash
-# setup_usb_gadget.sh — Create USB HID composite gadget with 2 gamepad functions
+# setup_usb_gadget.sh — Create USB HID composite gadget with 4 gamepad functions
 # This script configures the Pi Zero W as a USB HID gamepad adapter via configfs.
-# It creates 2 HID endpoints (/dev/hidg0, /dev/hidg1) for 2 Wiimote players.
+# It creates 4 HID endpoints (/dev/hidg0 .. /dev/hidg3) for 4 Wiimote players.
 #
 # The script waits for the dwc2 USB Device Controller to become available
 # (handles boot race conditions where the module hasn't loaded yet).

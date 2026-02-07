@@ -6,8 +6,8 @@ A headless daemon that runs on a Raspberry Pi Zero W, continuously scanning
 for Wiimotes via Bluetooth and forwarding their inputs to an Android device
 as standard USB HID gamepads over the OTG port.
 
-Supports up to 2 Wiimotes simultaneously. Each Wiimote maps to a separate
-HID gamepad device (/dev/hidg0, /dev/hidg1). Android sees them as standard
+Supports up to 4 Wiimotes simultaneously. Each Wiimote maps to a separate
+HID gamepad device (/dev/hidg0 .. /dev/hidg3). Android sees them as standard
 USB gamepads — no drivers or apps needed on the Android side.
 
 HID report format (4 bytes per gamepad):
@@ -27,8 +27,8 @@ HID report format (4 bytes per gamepad):
         bit 7: (reserved)
 
 Special combos:
-    + and - together (held 1s): disconnect this Wiimote
-    Home (held 2s):             recalibrate accelerometer zero-point
+    + and - together (held 5s): disconnect this Wiimote
+    Home (held 5s):             recalibrate accelerometer zero-point
 """
 
 import logging

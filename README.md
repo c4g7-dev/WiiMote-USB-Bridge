@@ -1,7 +1,7 @@
 # Wiimote-to-Android USB Gamepad Bridge
 
 Turn a **Raspberry Pi Zero W** into a wireless Wiimote-to-USB gamepad adapter.  
-The Pi connects to up to **2 Wiimotes** via Bluetooth and presents them to an Android phone as standard **USB HID gamepads** over the OTG port — no app or driver needed on Android.
+The Pi connects to up to **4 Wiimotes** via Bluetooth and presents them to an Android phone as standard **USB HID gamepads** over the OTG port — no app or driver needed on Android.
 
 ```
 Wiimote(s) ──[Bluetooth]──▶ Pi Zero W ──[USB OTG]──▶ Android Phone
@@ -12,35 +12,38 @@ Wiimote(s) ──[Bluetooth]──▶ Pi Zero W ──[USB OTG]──▶ Android
 
 - **Headless operation** — starts automatically on boot via systemd
 - **Auto-scanning** — continuously looks for Wiimotes; reconnects on disconnect
-- **2-player support** — each Wiimote gets its own player LED and HID device
+- **4-player support** — each Wiimote gets its own player LED (1–4) and HID device
+- **Sequential assignment** — first Wiimote always becomes P1, then P2, etc.
+- **D-Pad as hat switch** — proper directional input recognized as D-Pad on Android
+- **7 buttons** — A, B, 1, 2, Plus, Minus, Home all mapped as gamepad buttons
 - **Accelerometer** — tilt is mapped to analog stick axes (X/Y)
 - **Instant Android support** — Android natively recognizes USB HID gamepads
-- **Recalibrate on the fly** — press Home to recalibrate the accelerometer zero-point
-- **Clean disconnect** — press + and − together on the Wiimote
+- **Recalibrate on the fly** — hold Home for 5s to recalibrate the accelerometer zero-point
+- **Clean disconnect** — hold + and − together for 5s on the Wiimote
 
 ## Button Mapping
 
-| Wiimote       | Gamepad Output   | HID Bit |
-|---------------|------------------|---------|
-| D-Pad Left    | Button 1         | bit 0   |
-| D-Pad Right   | Button 2         | bit 1   |
-| D-Pad Up      | Button 3         | bit 2   |
-| D-Pad Down    | Button 4         | bit 3   |
-| A             | Button 5         | bit 4   |
-| B             | Button 6         | bit 5   |
-| 1             | Button 7         | bit 6   |
-| 2             | Button 8         | bit 7   |
-| Tilt left/right | X Axis (analog)| byte 0  |
-| Tilt fwd/back | Y Axis (analog)  | byte 1  |
-| Home          | Recalibrate accel| —       |
-| + and − together | Disconnect    | —       |
+| Wiimote         | Gamepad Output       | HID Field         |
+|-----------------|----------------------|--------------------|
+| D-Pad           | Hat Switch (D-Pad)   | 4-bit hat (byte 2) |
+| A               | Button A             | bit 0 (byte 3)    |
+| B               | Button B             | bit 1 (byte 3)    |
+| 1               | Button C             | bit 2 (byte 3)    |
+| 2               | Button X             | bit 3 (byte 3)    |
+| Plus            | Button Y             | bit 4 (byte 3)    |
+| Minus           | Button Z             | bit 5 (byte 3)    |
+| Home            | Button Mode          | bit 6 (byte 3)    |
+| Tilt left/right | X Axis (analog)      | signed byte 0     |
+| Tilt fwd/back   | Y Axis (analog)      | signed byte 1     |
+| + and − (hold 5s) | Disconnect Wiimote | —                  |
+| Home (hold 5s)  | Recalibrate accel    | —                  |
 
 ## Requirements
 
 - Raspberry Pi Zero W (with Bluetooth)
 - Raspberry Pi OS (Bookworm or Bullseye)
 - Micro-USB **data** cable (not power-only)
-- One or two Nintendo Wiimotes
+- One to four Nintendo Wiimotes
 
 ## Installation
 
@@ -78,15 +81,17 @@ Wiimote(s) ──[Bluetooth]──▶ Pi Zero W ──[USB OTG]──▶ Android
    ```
 
 3. **Press 1 + 2** on a Wiimote. The Pi will connect it:
-   - Player 1: LED 1 lights up
+   - Player 1: LED 1 lights up (first Wiimote always gets P1)
    - Player 2: LED 2 lights up
+   - Player 3: LED 3 lights up
+   - Player 4: LED 4 lights up
    - A brief rumble confirms the connection
 
 4. Open any game or gamepad tester app on Android — the Wiimote inputs will appear as a standard USB gamepad.
 
-5. To **disconnect** a Wiimote: press **+ and −** together (brief rumble, then the slot starts scanning again).
+5. To **disconnect** a Wiimote: hold **+ and −** together for 5 seconds (brief rumble, then the slot starts scanning again).
 
-6. To **recalibrate** the accelerometer: hold the Wiimote flat/still and press **Home**.
+6. To **recalibrate** the accelerometer: hold the Wiimote flat/still and hold **Home** for 5 seconds.
 
 ## Logs & Debugging
 
