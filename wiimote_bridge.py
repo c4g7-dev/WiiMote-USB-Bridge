@@ -68,8 +68,8 @@ SCAN_RETRY_DELAY = 2.0  # seconds between scan attempts
 HIDG_WAIT_INTERVAL = 3.0  # seconds between checks for /dev/hidg* availability
 CONNECT_RUMBLE_DURATION = 0.3  # seconds of rumble on connect
 DISCONNECT_RUMBLE_DURATION = 0.5  # seconds of rumble on manual disconnect
-DISCONNECT_HOLD_TIME = 1.0  # seconds to hold +/- combo to disconnect
-RECALIBRATE_HOLD_TIME = 2.0  # seconds to hold Home to recalibrate
+DISCONNECT_HOLD_TIME = 5.0  # seconds to hold +/- combo to disconnect
+RECALIBRATE_HOLD_TIME = 5.0  # seconds to hold Home to recalibrate
 
 # LED bitmasks for player numbers (cwiid LED constants)
 PLAYER_LEDS = [
