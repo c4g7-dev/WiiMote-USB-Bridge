@@ -10,18 +10,17 @@ Supports up to 2 Wiimotes simultaneously. Each Wiimote maps to a separate
 HID gamepad device (/dev/hidg0, /dev/hidg1). Android sees them as standard
 USB gamepads — no drivers or apps needed on the Android side.
 
-HID report format (3 bytes per gamepad):
+HID report format (4 bytes per gamepad):
     Byte 0: X axis (signed byte, -127..127) — accelerometer tilt left/right
     Byte 1: Y axis (signed byte, -127..127) — accelerometer tilt fwd/back
-    Byte 2: Buttons bitmask (8 bits)
-        bit 0: D-Pad Left
-        bit 1: D-Pad Right
-        bit 2: D-Pad Up
-        bit 3: D-Pad Down
-        bit 4: A
-        bit 5: B
-        bit 6: Button 1
-        bit 7: Button 2
+    Byte 2: Hat switch (low nibble) — D-Pad direction
+        0=Up, 1=Up-Right, 2=Right, 3=Down-Right,
+        4=Down, 5=Down-Left, 6=Left, 7=Up-Left, 8=None
+    Byte 3: Buttons bitmask (low nibble)
+        bit 0: A      → Android BUTTON_A
+        bit 1: B      → Android BUTTON_B
+        bit 2: Button 1 → Android BUTTON_C
+        bit 3: Button 2 → Android BUTTON_X
 
 Special combos:
     + and - together: disconnect this Wiimote
@@ -94,9 +93,9 @@ logger = logging.getLogger("wiimote-bridge")
 # HID Report helpers
 # ---------------------------------------------------------------------------
 
-# The 3-byte struct: signed byte (X), signed byte (Y), unsigned byte (buttons)
-REPORT_FORMAT = "<bbB"
-ZERO_REPORT = struct.pack(REPORT_FORMAT, 0, 0, 0)
+# The 4-byte struct: signed byte (X), signed byte (Y), hat switch, buttons
+REPORT_FORMAT = "<bbBB"
+ZERO_REPORT = struct.pack(REPORT_FORMAT, 0, 0, 8, 0)  # hat=8 means no direction
 
 
 def clamp(value, minimum, maximum):
@@ -124,16 +123,12 @@ def acc_to_axis(raw, zero, sensitivity=ACC_SENSITIVITY):
 
 
 # Mapping table: (cwiid button constant, HID button bit)
-# Used by encode_buttons() to convert cwiid bitmask to HID bitmask.
+# D-Pad is handled separately via hat switch — only face buttons here.
 _BUTTON_MAP = (
-    (cwiid.BTN_LEFT,  0x01),  # bit 0: D-Pad Left
-    (cwiid.BTN_RIGHT, 0x02),  # bit 1: D-Pad Right
-    (cwiid.BTN_UP,    0x04),  # bit 2: D-Pad Up
-    (cwiid.BTN_DOWN,  0x08),  # bit 3: D-Pad Down
-    (cwiid.BTN_A,     0x10),  # bit 4: A
-    (cwiid.BTN_B,     0x20),  # bit 5: B
-    (cwiid.BTN_1,     0x40),  # bit 6: Button 1
-    (cwiid.BTN_2,     0x80),  # bit 7: Button 2
+    (cwiid.BTN_A,  0x01),  # bit 0: Button 1 → Android BUTTON_A
+    (cwiid.BTN_B,  0x02),  # bit 1: Button 2 → Android BUTTON_B
+    (cwiid.BTN_1,  0x04),  # bit 2: Button 3 → Android BUTTON_C
+    (cwiid.BTN_2,  0x08),  # bit 3: Button 4 → Android BUTTON_X
 )
 
 
@@ -150,9 +145,41 @@ def encode_buttons(cwiid_buttons):
     return hid_buttons
 
 
-def build_report(x_axis, y_axis, buttons_byte):
-    """Pack a 3-byte HID gamepad report."""
-    return struct.pack(REPORT_FORMAT, x_axis, y_axis, buttons_byte)
+def encode_hat_switch(cwiid_buttons):
+    """Convert D-pad button state to HID hat switch value.
+
+    Hat switch values (clockwise from north):
+        0=Up, 1=Up-Right, 2=Right, 3=Down-Right,
+        4=Down, 5=Down-Left, 6=Left, 7=Up-Left,
+        8=Null (no direction pressed).
+    """
+    up = bool(cwiid_buttons & cwiid.BTN_UP)
+    down = bool(cwiid_buttons & cwiid.BTN_DOWN)
+    left = bool(cwiid_buttons & cwiid.BTN_LEFT)
+    right = bool(cwiid_buttons & cwiid.BTN_RIGHT)
+
+    if up and right:
+        return 1
+    if up and left:
+        return 7
+    if down and right:
+        return 3
+    if down and left:
+        return 5
+    if up:
+        return 0
+    if right:
+        return 2
+    if down:
+        return 4
+    if left:
+        return 6
+    return 8  # null — no direction
+
+
+def build_report(x_axis, y_axis, hat_switch, buttons_byte):
+    """Pack a 4-byte HID gamepad report."""
+    return struct.pack(REPORT_FORMAT, x_axis, y_axis, hat_switch, buttons_byte)
 
 
 # ---------------------------------------------------------------------------
@@ -441,8 +468,9 @@ class PlayerSlot:
         acc = state.get("acc", DEFAULT_ACC_ZERO)
         x_axis = acc_to_axis(acc[0], self._acc_zero[0])
         y_axis = acc_to_axis(acc[1], self._acc_zero[1])
+        hat = encode_hat_switch(buttons)
         hid_buttons = encode_buttons(buttons)
-        return build_report(x_axis, y_axis, hid_buttons)
+        return build_report(x_axis, y_axis, hat, hid_buttons)
 
     def _send_report(self, report):
         """Send an HID report, handling USB connect/disconnect transitions."""

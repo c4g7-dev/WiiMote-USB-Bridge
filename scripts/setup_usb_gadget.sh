@@ -26,31 +26,55 @@ NUM_PLAYERS=2
 UDC_WAIT_TIMEOUT=120  # seconds to wait for UDC to appear
 UDC_POLL_INTERVAL=2   # seconds between UDC checks
 
-# HID Report Descriptor for a gamepad: 2 axes (signed byte each) + 8 buttons
+# HID Report Descriptor for a gamepad:
+#   2 axes (signed byte each) + hat switch (D-pad) + 4 buttons
+#
+# Report format (4 bytes):
+#   Byte 0: X axis (signed, -127..127) — accelerometer tilt left/right
+#   Byte 1: Y axis (signed, -127..127) — accelerometer tilt forward/back
+#   Byte 2: Hat switch (low nibble, 0-7=direction, 8+=null) + padding
+#   Byte 3: Buttons (low nibble: bit0=A, bit1=B, bit2=1, bit3=2) + padding
+#
 # Decoded:
 #   0x05, 0x01        Usage Page (Generic Desktop)
 #   0x09, 0x05        Usage (Game Pad)
 #   0xA1, 0x01        Collection (Application)
-#   0x15, 0x81          Logical Minimum (-127)
-#   0x25, 0x7F          Logical Maximum (127)
-#   0x09, 0x01          Usage (Pointer)
-#   0xA1, 0x00          Collection (Physical)
-#   0x09, 0x30            Usage (X)
-#   0x09, 0x31            Usage (Y)
-#   0x75, 0x08            Report Size (8)
-#   0x95, 0x02            Report Count (2)
-#   0x81, 0x02            Input (Data, Var, Abs)
-#   0xC0                End Collection
-#   0x05, 0x09          Usage Page (Button)
-#   0x19, 0x01          Usage Minimum (Button 1)
-#   0x29, 0x08          Usage Maximum (Button 8)
-#   0x15, 0x00          Logical Minimum (0)
-#   0x25, 0x01          Logical Maximum (1)
-#   0x75, 0x01          Report Size (1)
-#   0x95, 0x08          Report Count (8)
-#   0x81, 0x02          Input (Data, Var, Abs)
+#     0xA1, 0x00        Collection (Physical)
+#       0x05, 0x01        Usage Page (Generic Desktop)
+#       0x09, 0x30        Usage (X)
+#       0x09, 0x31        Usage (Y)
+#       0x15, 0x81        Logical Minimum (-127)
+#       0x25, 0x7F        Logical Maximum (127)
+#       0x75, 0x08        Report Size (8)
+#       0x95, 0x02        Report Count (2)
+#       0x81, 0x02        Input (Data, Var, Abs)
+#     0xC0              End Collection
+#     0x05, 0x01        Usage Page (Generic Desktop)
+#     0x09, 0x39        Usage (Hat switch)
+#     0x15, 0x00        Logical Minimum (0)
+#     0x25, 0x07        Logical Maximum (7)
+#     0x35, 0x00        Physical Minimum (0)
+#     0x46, 0x3B, 0x01  Physical Maximum (315)
+#     0x65, 0x14        Unit (Degrees)
+#     0x75, 0x04        Report Size (4)
+#     0x95, 0x01        Report Count (1)
+#     0x81, 0x42        Input (Data, Var, Abs, Null)
+#     0x75, 0x04        Report Size (4)   — padding
+#     0x95, 0x01        Report Count (1)
+#     0x81, 0x01        Input (Constant)
+#     0x05, 0x09        Usage Page (Button)
+#     0x19, 0x01        Usage Minimum (Button 1)
+#     0x29, 0x04        Usage Maximum (Button 4)
+#     0x15, 0x00        Logical Minimum (0)
+#     0x25, 0x01        Logical Maximum (1)
+#     0x75, 0x01        Report Size (1)
+#     0x95, 0x04        Report Count (4)
+#     0x81, 0x02        Input (Data, Var, Abs)
+#     0x75, 0x01        Report Size (1)   — padding
+#     0x95, 0x04        Report Count (4)
+#     0x81, 0x01        Input (Constant)
 #   0xC0              End Collection
-REPORT_DESC_HEX="05010905A1011581257F0901A10009300931750895028102C005091901290815002501750195088102C0"
+REPORT_DESC_HEX="05010905A101A1000501093009311581257F750895028102C005010939150025073500463B016514750495018142750495018101050919012904150025017501950481027501950481​01C0"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -103,9 +127,9 @@ echo 0x1d6b > idVendor        # Linux Foundation
 echo 0x0104 > idProduct       # Multifunction Composite Gadget
 echo 0x0100 > bcdDevice       # v1.0.0
 echo 0x0200 > bcdUSB          # USB 2.0
-echo 0xEF   > bDeviceClass    # Miscellaneous
-echo 0x02   > bDeviceSubClass # Common Class
-echo 0x01   > bDeviceProtocol # Interface Association Descriptor
+echo 0x00   > bDeviceClass    # Use interface class
+echo 0x00   > bDeviceSubClass
+echo 0x00   > bDeviceProtocol
 
 # Device strings
 mkdir -p strings/0x409
@@ -125,7 +149,7 @@ for i in $(seq 0 $((NUM_PLAYERS - 1))); do
     mkdir -p "${func}"
     echo 0 > "${func}/protocol"
     echo 0 > "${func}/subclass"
-    echo 3 > "${func}/report_length"
+    echo 4 > "${func}/report_length"
     echo "${REPORT_DESC_HEX}" | xxd -r -ps > "${func}/report_desc"
     ln -s "${func}" configs/c.1/
     log "Created HID function hid.usb${i}"
