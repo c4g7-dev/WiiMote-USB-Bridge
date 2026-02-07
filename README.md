@@ -151,6 +151,10 @@ Remove `dtoverlay=dwc2` from `/boot/firmware/config.txt` and `dwc2`/`libcomposit
 | High latency | Disable WiFi to free the shared BT/WiFi radio: `sudo rfkill block wifi` |
 | Bridge keeps restarting | Check logs: `journalctl -u wiimote-bridge.service -e`. Usually a missing `python3-cwiid` package. |
 
+## Credits
+
+Built by **Cedrik** ([@c4g7-dev](https://github.com/c4g7-dev)).
+
 ## License
 
 MIT
