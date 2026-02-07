@@ -3,6 +3,10 @@
 Turn a **Raspberry Pi Zero W** into a wireless Wiimote-to-USB gamepad adapter.  
 The Pi connects to up to **4 Wiimotes** via Bluetooth and presents them to an Android phone as standard **USB HID gamepads** over the OTG port — no app or driver needed on Android.
 
+<p align="center">
+  <img src="images/demo.png" alt="Wiimote Bridge in action — two Wiimotes connected to a Pi Zero W, playing Mario Kart 8" width="700">
+</p>
+
 ```
 Wiimote(s) ──[Bluetooth]──▶ Pi Zero W ──[USB OTG]──▶ Android Phone
                               (bridge)              (sees USB gamepads)
@@ -50,8 +54,8 @@ Wiimote(s) ──[Bluetooth]──▶ Pi Zero W ──[USB OTG]──▶ Android
 1. **Clone** this repo onto the Pi (or copy the files via SCP):
 
    ```bash
-   git clone https://github.com/YOUR_USER/wii-mote.git
-   cd wii-mote
+   git clone https://github.com/c4g7-dev/WiiMote-USB-Bridge.git
+   cd WiiMote-USB-Bridge
    ```
 
 2. **Run the installer** as root:
