@@ -62,6 +62,11 @@ NUM_PLAYERS = 4
 # without this, cwiid.Wiimote() calls from two threads collide and produce
 # "Bluetooth name read error" failures.
 _bt_scan_lock = threading.Lock()
+
+# Scan-turn mechanism: ensures Wiimotes are assigned to the lowest available
+# slot first (P1 before P2, P2 before P3, etc.).
+_slot_connected = {}       # {slot_index: bool} — True if slot has a Wiimote
+_slot_connected_lock = threading.Lock()
 POLL_RATE_HZ = 100
 POLL_INTERVAL = 1.0 / POLL_RATE_HZ
 SCAN_RETRY_DELAY = 2.0  # seconds between scan attempts
@@ -338,12 +343,20 @@ class PlayerSlot:
     def _run(self):
         """Main loop: scan for Wiimote, forward inputs, handle disconnect."""
         while self._running:
+            # Mark this slot as disconnected
+            with _slot_connected_lock:
+                _slot_connected[self.player_num] = False
+
             # Phase 1: scan and connect
             wiimote = self._scan_for_wiimote()
             if wiimote is None:
                 continue  # _running was set to False, or scan error
 
             self._wiimote = wiimote
+
+            # Mark as connected so higher slots can start scanning
+            with _slot_connected_lock:
+                _slot_connected[self.player_num] = True
 
             # Phase 2: configure the connected Wiimote
             try:
@@ -364,17 +377,34 @@ class PlayerSlot:
             if self._running:
                 logger.info("[%s] Wiimote disconnected, rescanning...", self.player_label)
 
+    def _is_my_turn_to_scan(self):
+        """Check if this slot is the lowest-numbered unconnected slot.
+
+        Ensures Wiimotes are assigned in order: P1 first, then P2, etc.
+        A slot may scan only if all lower-numbered slots are connected.
+        """
+        with _slot_connected_lock:
+            for i in range(self.player_num):
+                if not _slot_connected.get(i, False):
+                    return False
+            return True
+
     def _scan_for_wiimote(self):
         """Block until a Wiimote is found or the slot is stopped.
 
-        Uses a module-level lock so that only one player slot performs a
-        Bluetooth inquiry scan at a time (the Pi Zero W's single HCI
-        adapter cannot handle concurrent scans).
+        Waits for its turn (all lower slots must be connected first),
+        then uses a module-level lock so that only one player slot
+        performs a Bluetooth inquiry scan at a time.
 
         Returns:
             A cwiid.Wiimote instance, or None if stopped / error.
         """
         while self._running:
+            # Wait for our turn — only scan if all lower slots are connected
+            if not self._is_my_turn_to_scan():
+                time.sleep(SCAN_RETRY_DELAY)
+                continue
+
             logger.info(
                 "[%s] Waiting for Wiimote (press 1+2 on controller)...",
                 self.player_label,
