@@ -6,6 +6,8 @@ Wants=bluetooth.target wiimote-gadget.service
 [Service]
 Type=simple
 ExecStartPre=/bin/sleep 2
+ExecStartPre=/usr/sbin/rfkill unblock bluetooth
+ExecStartPre=/usr/bin/hciconfig hci0 up
 ExecStart=/usr/bin/python3 /opt/wiimote-bridge/wiimote_bridge.py
 Restart=always
 RestartSec=5

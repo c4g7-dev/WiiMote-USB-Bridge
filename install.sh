@@ -57,6 +57,7 @@ apt-get install -y --no-install-recommends \
     bluetooth \
     bluez \
     libbluetooth-dev \
+    rfkill \
     xxd
 
 log_info "System packages installed."
@@ -77,14 +78,14 @@ fi
 
 log_info "Boot config: ${BOOT_CONFIG}"
 
-# Add dtoverlay=dwc2 if not already present
-if grep -q "^dtoverlay=dwc2" "${BOOT_CONFIG}"; then
-    log_info "dtoverlay=dwc2 already in ${BOOT_CONFIG}"
+# Add dtoverlay=dwc2 under [all] section if not already there.
+# We must check section-aware: the overlay may exist under [cm5] or another
+# section but NOT under [all], which is where we need it.
+if awk '/^\[all\]/,/^\[/' "${BOOT_CONFIG}" | grep -q "^dtoverlay=dwc2"; then
+    log_info "dtoverlay=dwc2 already in [all] section of ${BOOT_CONFIG}"
 else
-    log_info "Adding dtoverlay=dwc2 to ${BOOT_CONFIG}"
-    echo "" >> "${BOOT_CONFIG}"
-    echo "# USB OTG gadget mode for Wiimote Bridge" >> "${BOOT_CONFIG}"
-    echo "dtoverlay=dwc2" >> "${BOOT_CONFIG}"
+    log_info "Adding dtoverlay=dwc2 under [all] in ${BOOT_CONFIG}"
+    sed -i '/^\[all\]/a dtoverlay=dwc2' "${BOOT_CONFIG}"
 fi
 
 # Add dwc2 and libcomposite to /etc/modules if not present
@@ -143,12 +144,17 @@ udevadm control --reload-rules
 log_info "Udev rules installed."
 
 # ---------------------------------------------------------------------------
-# Step 6: Enable Bluetooth service
+# Step 6: Enable Bluetooth service and unblock rfkill
 # ---------------------------------------------------------------------------
 
 log_info "Enabling Bluetooth service..."
 systemctl enable bluetooth.service
 systemctl start bluetooth.service 2>/dev/null || true
+
+# Ensure Bluetooth is not soft-blocked by rfkill (common on Pi Zero W)
+log_info "Unblocking Bluetooth via rfkill..."
+rfkill unblock bluetooth 2>/dev/null || true
+hciconfig hci0 up 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Done
