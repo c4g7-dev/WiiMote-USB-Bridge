@@ -56,6 +56,7 @@ NUM_PLAYERS = 2
 POLL_RATE_HZ = 100
 POLL_INTERVAL = 1.0 / POLL_RATE_HZ
 SCAN_RETRY_DELAY = 2.0  # seconds between scan attempts
+HIDG_WAIT_INTERVAL = 3.0  # seconds between checks for /dev/hidg* availability
 CONNECT_RUMBLE_DURATION = 0.3  # seconds of rumble on connect
 DISCONNECT_RUMBLE_DURATION = 0.5  # seconds of rumble on manual disconnect
 
@@ -153,31 +154,58 @@ def build_report(x_axis, y_axis, buttons_byte):
 # ---------------------------------------------------------------------------
 
 class HIDWriter:
-    """Manages writing HID reports to a /dev/hidgX device file."""
+    """Manages writing HID reports to a /dev/hidgX device file.
+
+    Resilient to the device not existing (USB cable not connected) or
+    disappearing mid-session (cable unplugged). Callers should use
+    try_open() which never raises, and write() which silently drops
+    reports when the device isn't available.
+    """
 
     def __init__(self, device_path):
         self.device_path = device_path
         self._fd = None
 
-    def open(self):
-        """Open the HID gadget device for writing."""
+    @property
+    def is_open(self):
+        """True if the device file is currently open."""
+        return self._fd is not None
+
+    def is_available(self):
+        """Check if the HID gadget device file exists on disk."""
+        return os.path.exists(self.device_path)
+
+    def try_open(self):
+        """Try to open the HID gadget device. Returns True on success.
+
+        Never raises — returns False if the device doesn't exist or
+        can't be opened. Safe to call repeatedly.
+        """
         if self._fd is not None:
-            return
+            return True
+        if not self.is_available():
+            return False
         try:
             self._fd = open(self.device_path, "wb+", buffering=0)
             logger.info("Opened HID device: %s", self.device_path)
+            return True
         except OSError as exc:
-            logger.error("Cannot open %s: %s", self.device_path, exc)
-            raise
+            logger.debug("Cannot open %s: %s", self.device_path, exc)
+            return False
 
     def write(self, report):
-        """Write a raw HID report (bytes) to the device."""
+        """Write a raw HID report (bytes) to the device.
+
+        Silently drops the report if the device isn't open.
+        Closes the device on write failure (e.g. USB cable unplugged).
+        """
         if self._fd is None:
             return
         try:
             self._fd.write(report)
         except OSError as exc:
-            logger.warning("Write to %s failed: %s", self.device_path, exc)
+            logger.warning("Write to %s failed (USB disconnected?): %s", self.device_path, exc)
+            self.close()
 
     def release_all(self):
         """Send a zero report (all buttons released, axes centered)."""
@@ -187,12 +215,14 @@ class HIDWriter:
         """Send a release report and close the device."""
         if self._fd is not None:
             try:
-                self.release_all()
+                self._fd.write(ZERO_REPORT)
+            except OSError:
+                pass
+            try:
                 self._fd.close()
             except OSError:
                 pass
-            finally:
-                self._fd = None
+            self._fd = None
             logger.info("Closed HID device: %s", self.device_path)
 
 
@@ -201,7 +231,14 @@ class HIDWriter:
 # ---------------------------------------------------------------------------
 
 class PlayerSlot:
-    """Manages scanning, connecting, and forwarding for one Wiimote player."""
+    """Manages scanning, connecting, and forwarding for one Wiimote player.
+
+    The slot is always scanning for a Wiimote via Bluetooth, regardless of
+    whether USB (and thus /dev/hidgX) is available. When a Wiimote is
+    connected, inputs are forwarded to the HID device if it exists; if USB
+    is not connected, the Wiimote stays paired and inputs are silently
+    dropped until the USB cable is plugged in.
+    """
 
     def __init__(self, player_num, hidg_path):
         """
@@ -218,6 +255,7 @@ class PlayerSlot:
         self._thread = None
         self._running = False
         self._acc_zero = DEFAULT_ACC_ZERO
+        self._usb_was_connected = False
 
     def start(self):
         """Start the player slot thread (scan + forward loop)."""
@@ -262,14 +300,8 @@ class PlayerSlot:
                 self._disconnect()
                 continue
 
-            # Phase 3: open HID device and forward inputs
-            try:
-                self.hid.open()
-            except OSError:
-                self._disconnect()
-                continue
-
-            logger.info("[%s] Forwarding inputs -> %s", self.player_label, self.hidg_path)
+            # Phase 3: forward inputs (handles USB not being ready yet)
+            logger.info("[%s] Wiimote ready, forwarding inputs", self.player_label)
             self._forward_loop(wiimote)
 
             # Phase 4: cleanup after disconnect
@@ -333,7 +365,14 @@ class PlayerSlot:
             )
 
     def _forward_loop(self, wiimote):
-        """Poll the Wiimote state and write HID reports at POLL_RATE_HZ."""
+        """Poll the Wiimote state and write HID reports at POLL_RATE_HZ.
+
+        Resilient to USB cable state changes:
+        - If /dev/hidgX doesn't exist yet, keeps polling the Wiimote
+          and periodically retries opening the HID device.
+        - If a write fails (USB cable unplugged), closes the HID device
+          and continues polling; will reopen when USB returns.
+        """
         while self._running:
             try:
                 state = wiimote.state
@@ -344,38 +383,70 @@ class PlayerSlot:
 
             buttons = state.get("buttons", 0)
 
-            # Check for disconnect combo: + and - pressed together
-            if (buttons & cwiid.BTN_PLUS) and (buttons & cwiid.BTN_MINUS):
-                logger.info("[%s] Disconnect combo pressed (+/-)", self.player_label)
-                try:
-                    wiimote.rumble = True
-                    time.sleep(DISCONNECT_RUMBLE_DURATION)
-                    wiimote.rumble = False
-                except Exception:
-                    pass
+            # Handle special button combos (disconnect, recalibrate)
+            action = self._handle_special_combos(wiimote, buttons)
+            if action == "disconnect":
                 break
-
-            # Check for recalibrate combo: Home button
-            if buttons & cwiid.BTN_HOME:
-                logger.info("[%s] Recalibrating accelerometer (Home pressed)", self.player_label)
-                self._calibrate_accelerometer(wiimote)
-                # Don't send a report this frame — let the user hold still
-                time.sleep(0.5)
+            if action == "recalibrate":
                 continue
 
-            # Read accelerometer
-            acc = state.get("acc", DEFAULT_ACC_ZERO)
-            x_axis = acc_to_axis(acc[0], self._acc_zero[0])
-            y_axis = acc_to_axis(acc[1], self._acc_zero[1])
+            # Build HID report from Wiimote state
+            report = self._build_report_from_state(state, buttons)
 
-            # Encode buttons
-            hid_buttons = encode_buttons(buttons)
-
-            # Build and send HID report
-            report = build_report(x_axis, y_axis, hid_buttons)
-            self.hid.write(report)
+            # Try to send via USB HID — resilient to USB not being connected
+            self._send_report(report)
 
             time.sleep(POLL_INTERVAL)
+
+    def _handle_special_combos(self, wiimote, buttons):
+        """Check for special button combos. Returns action string or None."""
+        # Disconnect combo: + and - pressed together
+        if (buttons & cwiid.BTN_PLUS) and (buttons & cwiid.BTN_MINUS):
+            logger.info("[%s] Disconnect combo pressed (+/-)", self.player_label)
+            try:
+                wiimote.rumble = True
+                time.sleep(DISCONNECT_RUMBLE_DURATION)
+                wiimote.rumble = False
+            except Exception:
+                pass
+            return "disconnect"
+
+        # Recalibrate combo: Home button
+        if buttons & cwiid.BTN_HOME:
+            logger.info("[%s] Recalibrating accelerometer (Home pressed)", self.player_label)
+            self._calibrate_accelerometer(wiimote)
+            time.sleep(0.5)
+            return "recalibrate"
+
+        return None
+
+    def _build_report_from_state(self, state, buttons):
+        """Extract accelerometer + buttons from Wiimote state into an HID report."""
+        acc = state.get("acc", DEFAULT_ACC_ZERO)
+        x_axis = acc_to_axis(acc[0], self._acc_zero[0])
+        y_axis = acc_to_axis(acc[1], self._acc_zero[1])
+        hid_buttons = encode_buttons(buttons)
+        return build_report(x_axis, y_axis, hid_buttons)
+
+    def _send_report(self, report):
+        """Send an HID report, handling USB connect/disconnect transitions."""
+        if not self.hid.is_open:
+            if self.hid.try_open():
+                self._log_usb_state(connected=True)
+                self._usb_was_connected = True
+        if self.hid.is_open:
+            self.hid.write(report)
+            # If write failed, HIDWriter closes itself; detect on next call
+            if not self.hid.is_open and self._usb_was_connected:
+                self._log_usb_state(connected=False)
+                self._usb_was_connected = False
+
+    def _log_usb_state(self, connected):
+        """Log USB HID connection state changes (avoids log spam)."""
+        if connected:
+            logger.info("[%s] USB connected, forwarding to %s", self.player_label, self.hidg_path)
+        else:
+            logger.info("[%s] USB disconnected, buffering Wiimote (will resume on reconnect)", self.player_label)
 
     def _disconnect(self):
         """Clean up Wiimote connection and HID device."""
@@ -410,16 +481,17 @@ class WiimoteBridge:
             "Wiimote Bridge starting (%d player slots)", self.num_players
         )
 
-        # Verify HID gadget devices exist
+        # Log USB HID gadget status (informational, not a hard requirement)
         for i in range(self.num_players):
             hidg = f"/dev/hidg{i}"
-            if not os.path.exists(hidg):
-                logger.error(
-                    "%s not found — is the USB gadget configured? "
-                    "Run setup_usb_gadget.sh first.",
+            if os.path.exists(hidg):
+                logger.info("%s available", hidg)
+            else:
+                logger.info(
+                    "%s not found yet — Bluetooth scanning will start "
+                    "anyway; USB forwarding begins when cable is connected",
                     hidg,
                 )
-                sys.exit(1)
 
         # Create and start player slots
         for i in range(self.num_players):

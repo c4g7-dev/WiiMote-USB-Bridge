@@ -9,6 +9,7 @@ Type=oneshot
 ExecStart=/opt/wiimote-bridge/setup_usb_gadget.sh
 ExecStop=/opt/wiimote-bridge/teardown_usb_gadget.sh
 RemainAfterExit=yes
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target

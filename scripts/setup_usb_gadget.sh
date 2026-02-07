@@ -3,6 +3,9 @@
 # This script configures the Pi Zero W as a USB HID gamepad adapter via configfs.
 # It creates 2 HID endpoints (/dev/hidg0, /dev/hidg1) for 2 Wiimote players.
 #
+# The script waits for the dwc2 USB Device Controller to become available
+# (handles boot race conditions where the module hasn't loaded yet).
+#
 # Each gamepad HID report is 3 bytes:
 #   Byte 0: X axis (signed, -127..127) — accelerometer tilt left/right
 #   Byte 1: Y axis (signed, -127..127) — accelerometer tilt forward/back
@@ -20,6 +23,8 @@ set -euo pipefail
 
 GADGET_DIR="/sys/kernel/config/usb_gadget/wiimote_gamepad"
 NUM_PLAYERS=2
+UDC_WAIT_TIMEOUT=120  # seconds to wait for UDC to appear
+UDC_POLL_INTERVAL=2   # seconds between UDC checks
 
 # HID Report Descriptor for a gamepad: 2 axes (signed byte each) + 8 buttons
 # Decoded:
@@ -62,6 +67,32 @@ if ! mountpoint -q /sys/kernel/config; then
     mount -t configfs none /sys/kernel/config
 fi
 
+# Try to load kernel modules if not loaded yet
+modprobe dwc2 2>/dev/null || true
+modprobe libcomposite 2>/dev/null || true
+
+# Wait for UDC to appear (dwc2 module may still be loading at boot)
+log "Waiting for USB Device Controller (UDC) to appear..."
+elapsed=0
+UDC_NAME=""
+while [ -z "${UDC_NAME}" ] && [ "${elapsed}" -lt "${UDC_WAIT_TIMEOUT}" ]; do
+    UDC_NAME=$(ls /sys/class/udc 2>/dev/null | head -1)
+    if [ -z "${UDC_NAME}" ]; then
+        sleep "${UDC_POLL_INTERVAL}"
+        elapsed=$((elapsed + UDC_POLL_INTERVAL))
+    fi
+done
+
+if [ -z "${UDC_NAME}" ]; then
+    log "ERROR: No USB Device Controller found after ${UDC_WAIT_TIMEOUT}s."
+    log "  Check: dtoverlay=dwc2 in /boot/firmware/config.txt"
+    log "  Check: dwc2 in /etc/modules"
+    log "  Check: dmesg | grep dwc2"
+    exit 1
+fi
+
+log "UDC found: ${UDC_NAME} (after ${elapsed}s)"
+
 log "Creating USB HID gamepad gadget..."
 
 mkdir -p "${GADGET_DIR}"
@@ -100,12 +131,7 @@ for i in $(seq 0 $((NUM_PLAYERS - 1))); do
     log "Created HID function hid.usb${i}"
 done
 
-# Activate the gadget by binding to the UDC (USB Device Controller)
-UDC_NAME=$(ls /sys/class/udc 2>/dev/null | head -1)
-if [ -z "${UDC_NAME}" ]; then
-    log "ERROR: No USB Device Controller found. Is dwc2 overlay enabled?"
-    exit 1
-fi
+# Activate the gadget by binding to the UDC
 echo "${UDC_NAME}" > UDC
 
 log "Gadget activated on UDC: ${UDC_NAME}"
